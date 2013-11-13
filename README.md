@@ -9,7 +9,6 @@ JavaScript-implementation of tGAP-model
 
 Basic idea publicated by **P.v. Oosterom** _ (2005) _ *Variable-scale Topological Data Structures Suitable for Progressive Data Transfer: The GAP-
 face Tree and GAP-edge Forest*
-
 * www.rgi-otb.nl/uwsm2/publications/RGI-233-01.pdf
 * http://www.tandfonline.com/doi/abs/10.1559/152304005775194782#.UoNrlh_ymas
 
