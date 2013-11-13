@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<script src="http://d3js.org/d3.v3.min.js"></script> 
+	<script src="http://d3js.org/topojson.v1.min.js"></script>
+    <script src="OpenLayers.js"></script>
+    <script src="spatialOperators_OL.js"></script>
+    
+	<style>
+	</style>
+</head>
+<body>
+	<script>
+		//d3.json("simple_dataset_ext_topo.json", function(error, topology) {
+		//d3.json("vg250_clipped_mini_topo.json", function(error, topology) {
+		d3.json("vg250_clipped3_topo.json", function(error, topology) {
+			var pure_data = topology.objects.simple_dataset_ext;
+			//pure_data = topology.objects.vg250_gem_clipped3;
+			pure_data = topology.objects.vg250_gem_clipped4;
+			console.log(topology);
+			//console.dir(topojson.feature(topology, pure_data))
+			//console.log(topojson.neighbors(pure_data.geometries))
+
+			var tGAP_ = new tGAP(topology);
+			tGAP_.initialise(pure_data.geometries);
+			var areaExtent = tGAP_.getAreaExtent();
+
+			console.log(tGAP_.getFaceTree())
+
+			//console.log(tGAP_.getEdgeForest().edges[433])
+			//console.log(tGAP_.getFaceTree().faces["11823_1"])
+
+
+			//setTimeout(function(){alert("Hello"); console.log(tGAP_.getFaceTree().faces["11057_-1"])},5000);
+			
+			
+			//tGAP_.merge(generateSteps(10, areaExtent));
+			
+		});
+
+		function generateSteps(steps, extent){
+			var tol_steps_range = (extent[1]-extent[0])/steps;
+			//console.log(areaExtent, tol_steps_range)
+			var tol_steps = [];
+			for (var i=1; i<steps; i++){
+				tol_steps.push(extent[0]+(i*tol_steps_range))
+			}
+			return tol_steps;
+		}
+
+		function tGAP(topology){
+			var cur_imp = null;
+			var faceTree = new tGAP_face_tree();
+			var edgeForest = new tGAP_edge_forest();
+			var nodeList = new tGAP_node_list();
+			
+			this.getFaceTree=function(){ return faceTree; }
+			this.getEdgeForest=function(){ return edgeForest; }
+			this.getNodeList=function(){ return nodeList; }
+
+			this.initialise = function(dataset){
+				cur_imp = 0;
+				//build the tGAP-Face-Tree and the tGAP-Edge-Forest
+				dataset.map(function(datum){
+					//console.log(datum.properties.SHAPE_AREA)
+					if(datum.type=='Polygon'){
+						readPolygon(faceTree, edgeForest, nodeList, topology, datum.arcs, datum.id, -1)
+					}
+					else if(datum.type=='MultiPolygon'){
+						datum.arcs.map(function(poly,i){readPolygon(faceTree, edgeForest, nodeList, topology, poly, datum.id, i)
+						})						
+					}
+				})
+				for(var key in faceTree.faces){
+					if(faceTree.faces[key].hasHole!=null){
+						var hole = faceTree.faces[key].hasHole;
+						var orig_face_id = faceTree.faces[key].id.split('_')[0];
+						console.log(faceTree.faces[key],orig_face_id, hole)
+						for(var i=0;i<hole.length;i++){
+							var edge_id = hole[i][0];
+							if(edge_id<0)edge_id=(edge_id*(-1))-1;
+
+							var edge_filling = edgeForest.edges[edge_id];
+							if(edge_filling.left_face!=null)var ff_id = edge_filling.left_face;
+							else if(edge_filling.right_face!=null)var ff_id = edge_filling.right_face;
+							else console.log('Alert: Failure on "Hole-Filling-Detecton"!');
+							console.log(edge_id, edge_filling, ff_id)
+							
+							//var filling_face = faceTree.faces[ff_id+'_1'];
+						//	filling_face.isFilling = true;
+							console.log(faceTree.id_app[ff_id]);
+//hier bitte weiter machen!
+							
+						}
+						
+					}
+				}
+			}
+
+			this.merge = function(toleranceSteps){
+				//console.log(toleranceSteps)
+				//initialise a queue for all faces & for all edges
+				var face_queue = [], edge_queue = [];
+				for(var key in faceTree.faces){
+					face_queue.push(faceTree.faces[key]);
+				}
+				for(var key in edgeForest.edges){
+					edge_queue.push(edgeForest.edges[key]);
+				}
+				console.log(toleranceSteps[0])
+				//polling the queue
+				for(var j=0;j<face_queue.length;j++){
+					var face = face_queue[j], best_fitting;
+					if(face.area<toleranceSteps[0]){
+						console.log(face)
+						best_fitting = face.getLongestEdge(edgeForest);
+						console.log(best_fitting)
+
+					}
+					
+					
+				}
+			}	
+
+			this.getAreaExtent = function(){
+				//console.log(faceTree)
+				var minArea = Infinity, maxArea = 0;
+				for(var key in faceTree.faces){
+					//console.log(key, faceTree.faces[key], faceTree.faces[key].area)
+					var area = faceTree.faces[key].area;
+					if(area<minArea)minArea=area;
+					if(area>maxArea)maxArea=area;
+				}
+				return [minArea, maxArea];
+			}		
+
+
+			function readPolygon(faces, edges, nodes, topology_, polygon, poly_id, multiIndex){
+				var edge_cache = [];
+				var geo = new spatialOperators_OL();
+				//loop through all arcs of the polygon
+				//if(index=0){
+					polygon[0].map(function(arc){
+						var edge = new tGAP_edge(arc, poly_id, nodes, topology_)
+						edge.length = geo.getLength(edge.geometry);
+						edges.addEdge(edge);
+						edge_cache.push(edge);	//cache them for calculating the area
+						//console.log(edge)
+					})
+					var face = new tGAP_face(faces);
+					face.initialise(poly_id, polygon, multiIndex, edges);
+					faces.addFace(face)	
+				//}			
+			}			
+		}
+
+		function tGAP_face_tree(){
+			this.faces = {}, this.id_app = {};
+			var newIDs = -1; //working with a negative index --> it decrements!!!
+
+			this.addFace = function(face){
+				this.faces[face.id]=face;
+			}
+		}		
+
+		function tGAP_face(faces_){
+			var face_tree = faces_;
+			var geo_ = new spatialOperators_OL();
+			var edges_forest_ = null;
+			this.low_imp=0;
+			this.high_imp=null;
+			this.parent_id=null;
+			this.isFilling=null;
+			this.superiorFaces=null;
+
+			this.initialise = function(ID, edges, multiIndex, edges_forest){
+				edges_forest_ = edges_forest;
+				this.multiIndex=multiIndex;
+				this.id=''+ID+'_'+this.multiIndex;
+				//send info on multipoly indication to the face_tree ... needed as edges don't know the _ add on of the faces
+				if(face_tree.id_app[ID]==undefined)face_tree.id_app[ID]=[this.multiIndex];
+				else face_tree.id_app[ID].push(this.multiIndex);
+				this.edges=edges[0];
+				this.area=this.getArea();
+				this.hasHole = this.defineHoleState(edges);
+				if(this.hasHole!=null)console.log(this)
+				
+			}
+
+			this.getArea = function(edges){
+				//use the internal edges of the object, if nothing was posted
+				if(edges == undefined)var edges_cache = this.edges;
+				//...or use the one which was posted
+				else var edges_cache = edges;
+				var edges_array = [], directions=[];	//simple array for all edge_objects
+				//bump all edge_objects into the simple array
+				edges_cache = edges_cache.map(function(edge_id){
+					//correct id to positive value
+					var edge_id_ = edge_id, ccw=false;
+					if(edge_id_<0){edge_id_=(edge_id_*(-1))-1; ccw=true;}
+					//bump one edge_object into the array
+					edges_array.push(edges_forest_.edges[edge_id_]);
+					directions.push(ccw)
+
+				})
+				//calculate the area of all edges and return the value
+				return geo_.getArea(edges_array, directions);
+			}
+
+			this.defineHoleState  =function(edges__){
+				var hasHole = null;
+				if(edges__.length>1){
+					hasHole=edges__.slice(1,edges__.length);	//!!!Should already work with more than one hole!!!
+						//console.log(this.getArea(this.hasHole))
+					//Simple test if it works with more than one hole
+						//this.hasHole.push(edges__.slice(1,edges__.length))
+						//console.log(this.getArea(this.hasHole))
+//ToDo: Implement the subtraction of 'Holes' directly to 'getArea'
+//console.log(edges__, this.area, this.getArea(hasHole[0]), this.edges, hasHole)
+//this.area=this.area-this.getArea(this.hasHole)
+
+				}
+				return hasHole;
+			}
+
+			this.getLongestEdge = function(edgeForest_){
+				//console.log(this.edges)
+				var neg = false, id, longest_val = 0, longest;
+				this.edges.map(function(edge_id){
+					id = edge_id;
+					if(id<0){neg=true; id=(id*(-1)-1)}
+					var edge = edgeForest_.edges[id];
+					//console.log(edge.length)
+					if(edge.length>longest_val){
+						longest_val=edge.length;
+						longest = edge;
+					}					
+				})
+				return longest;
+			}			
+		}
+
+		function tGAP_edge_forest(){
+			this.edges = {};
+
+			this.addEdge = function(edge){
+				if(this.edges[edge.id]==undefined){
+					//console.log('Nobody home')
+					this.edges[edge.id]=edge;
+				}
+				else {
+					this.edges[edge.id].left_face = edge.left_face;
+					//console.log(edge.left_face)
+					//console.log('Exists already:',this.edges[edge.id])
+				}
+			}
+		}
+
+		function tGAP_edge(ID, face_ID, nodes, topology_){
+			//console.log(nodes)
+			this.imp_low=0;
+			this.imp_high=null;
+			this.left_face=null;
+			this.right_face=null;
+			this.id=null;
+			this.length = null;
+			if(ID<0){
+				this.id = (ID*(-1))-1;
+				this.left_face=face_ID;
+			}
+			else {
+				this.id=ID;
+				this.right_face=face_ID;
+			}
+			this.geometry=topojson.feature(topology_, {type: 'LineString', arcs:[this.id]}).geometry.coordinates;
+			
+			this.start_node = nodes.addNode(this.geometry[0]).id;
+			this.end_node = nodes.addNode(this.geometry[this.geometry.length-1]).id;
+			
+		}
+
+		function tGAP_node(ID, geometry){
+			this.id=ID;
+			this.geometry=geometry;
+		}
+		function tGAP_node_list(){
+			this.nodes = {};
+			var iter_ID = 0;
+
+			this.addNode = function(point){
+				var exists = [false, null];
+				for(var id in this.nodes){
+					//Test if current point exists in the node_list
+					if(this.nodes[id].geometry[0] == point[0] && this.nodes[id].geometry[1] == point[1]){
+						exists[0] = true;
+						//This point exists as 'node'...we can return the existing node
+						return this.nodes[id];
+					}				
+				}
+				//This point doesn't exist as 'node'...make one, add it to the this.nodes and return the node
+				if(exists[0]==false){
+					var node = new tGAP_node(iter_ID, point);
+					this.nodes[iter_ID]=node;
+					iter_ID += 1;
+					return node;
+				}
+			}
+			this.getNodeGeom = function(id){
+				return this.nodes[id].geometry;
+			}
+			this.getNode = function(id){
+				return this.nodes[id];
+			}
+		}
+
+			
+
+	</script>
+</body>
+</html>
